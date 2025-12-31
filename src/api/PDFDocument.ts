@@ -1,22 +1,8 @@
 import {
-  parse as parseHtml,
   HTMLElement,
   NodeType,
+  parse as parseHtml,
 } from 'node-html-better-parser';
-import Embeddable from './Embeddable';
-import {
-  EncryptedPDFError,
-  FontkitNotRegisteredError,
-  ForeignPageError,
-  RemovePageFromEmptyDocumentError,
-} from './errors';
-import PDFEmbeddedPage from './PDFEmbeddedPage';
-import PDFFont from './PDFFont';
-import PDFImage from './PDFImage';
-import PDFPage from './PDFPage';
-import PDFForm from './form/PDFForm';
-import { PageSizes } from './sizes';
-import { StandardFonts } from './StandardFonts';
 import {
   CustomFontEmbedder,
   CustomFontSubsetEmbedder,
@@ -27,9 +13,6 @@ import {
   PDFCatalog,
   PDFContext,
   PDFDict,
-  decodePDFRawStream,
-  PDFStream,
-  PDFRawStream,
   PDFHexString,
   PDFName,
   PDFObjectCopier,
@@ -44,18 +27,12 @@ import {
   StandardFontEmbedder,
   UnexpectedObjectTypeError,
 } from '../core';
-import {
-  ParseSpeeds,
-  AttachmentOptions,
-  SaveOptions,
-  Base64SaveOptions,
-  LoadOptions,
-  CreateOptions,
-  EmbedFontOptions,
-  SetTitleOptions,
-} from './PDFDocumentOptions';
+import { CipherTransformFactory } from '../core/crypto';
+import FileEmbedder, { AFRelationship } from '../core/embedders/FileEmbedder';
+import JavaScriptEmbedder from '../core/embedders/JavaScriptEmbedder';
 import PDFObject from '../core/objects/PDFObject';
 import PDFRef from '../core/objects/PDFRef';
+import PDFSecurity, { SecurityOptions } from '../core/security/PDFSecurity';
 import { Fontkit } from '../types/fontkit';
 import { TransformationMatrix } from '../types/matrix';
 import {
@@ -71,34 +48,35 @@ import {
   range,
   toUint8Array,
 } from '../utils';
-import FileEmbedder, { AFRelationship } from '../core/embedders/FileEmbedder';
+import Embeddable from './Embeddable';
+import {
+  EncryptedPDFError,
+  FontkitNotRegisteredError,
+  ForeignPageError,
+  RemovePageFromEmptyDocumentError,
+} from './errors';
+import PDFForm from './form/PDFForm';
+import {
+  AttachmentOptions,
+  Base64SaveOptions,
+  CreateOptions,
+  EmbedFontOptions,
+  FileDescriptorSaveOptions,
+  FileSaveOptions,
+  LoadOptions,
+  ParseSpeeds,
+  SaveOptions,
+  SetTitleOptions,
+} from './PDFDocumentOptions';
 import PDFEmbeddedFile from './PDFEmbeddedFile';
+import PDFEmbeddedPage from './PDFEmbeddedPage';
+import PDFFont from './PDFFont';
+import PDFImage from './PDFImage';
 import PDFJavaScript from './PDFJavaScript';
-import JavaScriptEmbedder from '../core/embedders/JavaScriptEmbedder';
-import { CipherTransformFactory } from '../core/crypto';
+import PDFPage from './PDFPage';
 import PDFSvg from './PDFSvg';
-import PDFSecurity, { SecurityOptions } from '../core/security/PDFSecurity';
-
-export type BasePDFAttachment = {
-  name: string;
-  data: Uint8Array;
-  mimeType: string | undefined;
-  afRelationship: AFRelationship | undefined;
-  description: string | undefined;
-  creationDate: Date | undefined;
-  modificationDate: Date | undefined;
-};
-
-export type SavedPDFAttachment = BasePDFAttachment & {
-  embeddedFileDict: PDFDict;
-  specRef: PDFRef;
-};
-
-export type UnsavedPDFAttachment = BasePDFAttachment & {
-  pdfEmbeddedFile: PDFEmbeddedFile;
-};
-
-export type PDFAttachment = UnsavedPDFAttachment | SavedPDFAttachment;
+import { PageSizes } from './sizes';
+import { StandardFonts } from './StandardFonts';
 
 /**
  * Represents a PDF document.
@@ -983,170 +961,6 @@ export default class PDFDocument {
     this.embeddedFiles.push(embeddedFile);
   }
 
-  private getRawAttachments() {
-    if (!this.catalog.has(PDFName.of('Names'))) return [];
-    const Names = this.catalog.lookup(PDFName.of('Names'), PDFDict);
-
-    if (!Names.has(PDFName.of('EmbeddedFiles'))) return [];
-    const EmbeddedFiles = Names.lookup(PDFName.of('EmbeddedFiles'), PDFDict);
-
-    if (!EmbeddedFiles.has(PDFName.of('Names'))) return [];
-    const EFNames = EmbeddedFiles.lookup(PDFName.of('Names'), PDFArray);
-
-    const rawAttachments = [];
-    for (let idx = 0, len = EFNames.size(); idx < len; idx += 2) {
-      const fileName = EFNames.lookup(idx) as PDFHexString | PDFString;
-      const fileSpec = EFNames.lookup(idx + 1, PDFDict);
-      rawAttachments.push({
-        fileName,
-        fileSpec,
-        specRef: EFNames.get(idx + 1) as PDFRef,
-      });
-    }
-
-    return rawAttachments;
-  }
-
-  private getSavedAttachments(): SavedPDFAttachment[] {
-    const rawAttachments = this.getRawAttachments();
-    return rawAttachments.flatMap(({ fileName, fileSpec, specRef }) => {
-      const efDict = fileSpec.lookup(PDFName.of('EF'));
-      if (!(efDict instanceof PDFDict)) return [];
-
-      const stream = efDict.lookup(PDFName.of('F'));
-      if (!(stream instanceof PDFStream)) return [];
-
-      const afr = fileSpec.lookup(PDFName.of('AFRelationship'));
-      const afRelationship =
-        afr instanceof PDFName
-          ? afr.toString().slice(1) // Remove leading slash
-          : afr instanceof PDFString
-            ? afr.decodeText()
-            : undefined;
-
-      const embeddedFileDict = stream.dict;
-      const subtype = embeddedFileDict.lookup(PDFName.of('Subtype'));
-
-      const mimeType =
-        subtype instanceof PDFName
-          ? subtype.toString().slice(1)
-          : subtype instanceof PDFString
-            ? subtype.decodeText()
-            : undefined;
-
-      const paramsDict = embeddedFileDict.lookup(PDFName.of('Params'), PDFDict);
-
-      let creationDate: Date | undefined;
-      let modificationDate: Date | undefined;
-
-      if (paramsDict instanceof PDFDict) {
-        const creationDateRaw = paramsDict.lookup(PDFName.of('CreationDate'));
-        const modDateRaw = paramsDict.lookup(PDFName.of('ModDate'));
-
-        if (creationDateRaw instanceof PDFString) {
-          creationDate = creationDateRaw.decodeDate();
-        }
-
-        if (modDateRaw instanceof PDFString) {
-          modificationDate = modDateRaw.decodeDate();
-        }
-      }
-
-      const descRaw = fileSpec.lookup(PDFName.of('Desc'));
-      let description: string | undefined;
-
-      if (descRaw instanceof PDFHexString) {
-        description = descRaw.decodeText();
-      }
-
-      return [
-        {
-          name: fileName.decodeText(),
-          data: decodePDFRawStream(stream as PDFRawStream).decode(),
-          mimeType: mimeType?.replace(/#([0-9A-Fa-f]{2})/g, (_, hex) =>
-            String.fromCharCode(parseInt(hex, 16)),
-          ),
-          afRelationship: afRelationship as AFRelationship,
-          description,
-          creationDate,
-          modificationDate,
-          embeddedFileDict: efDict,
-          specRef,
-        },
-      ];
-    });
-  }
-
-  private getUnsavedAttachments(): UnsavedPDFAttachment[] {
-    const attachments = this.embeddedFiles.flatMap((file) => {
-      if (file.getAlreadyEmbedded()) return [];
-      const embedder = file.getEmbedder();
-      return {
-        name: embedder.fileName,
-        data: embedder.getFileData(),
-        description: embedder.options.description,
-        mimeType: embedder.options.mimeType,
-        afRelationship: embedder.options.afRelationship,
-        creationDate: embedder.options.creationDate,
-        modificationDate: embedder.options.modificationDate,
-        pdfEmbeddedFile: file,
-      };
-    });
-
-    return attachments;
-  }
-
-  /**
-   * Get all attachments that are embedded in this document.
-   *
-   * @returns Array of attachments with name and data
-   */
-  getAttachments(): PDFAttachment[] {
-    const savedAttachments = this.getSavedAttachments();
-    const unsavedAttachments = this.getUnsavedAttachments();
-
-    return [...savedAttachments, ...unsavedAttachments];
-  }
-
-  detach(name: string) {
-    const attachedFiles = this.getAttachments();
-    attachedFiles.forEach((file) => {
-      if (file.name !== name) return;
-      // the file wasn't embedded into context yet
-      if ('pdfEmbeddedFile' in file) {
-        const i = this.embeddedFiles.findIndex(
-          (f) => file.pdfEmbeddedFile === f,
-        );
-        if (i !== undefined) this.embeddedFiles.splice(i, 1);
-      } else {
-        // remove references from catalog
-        const namesArr = this.catalog
-          .Names()
-          ?.lookup(PDFName.of('EmbeddedFiles'), PDFDict)
-          .lookup(PDFName.of('Names'), PDFArray);
-        const iNames = namesArr?.indexOf(file.specRef);
-        if (iNames !== undefined && iNames > 0) {
-          // attachment spec ref
-          namesArr?.remove(iNames);
-          // attachment name
-          namesArr?.remove(iNames - 1);
-        }
-        // AF-Tag for PDF-A3 compliance
-        const AF = this.catalog.AttachedFiles();
-        const afIndex = AF?.indexOf(file.specRef);
-        if (afIndex !== undefined) AF?.remove(afIndex);
-
-        // remove references from context
-        const streamRef = this.context
-          .lookupMaybe(file.specRef, PDFDict)
-          ?.lookupMaybe(PDFName.of('EF'), PDFDict)
-          ?.get(PDFName.of('F')) as PDFRef | undefined;
-        if (streamRef) this.context.delete(streamRef);
-        this.context.delete(file.specRef);
-      }
-    });
-  }
-
   /**
    * Embed a font into this document. The input data can be provided in multiple
    * formats:
@@ -1546,28 +1360,10 @@ export default class PDFDocument {
    * @returns Resolves with the bytes of the serialized document.
    */
   async save(options: SaveOptions = {}): Promise<Uint8Array> {
-    const {
-      useObjectStreams = true,
-      addDefaultPage = true,
-      objectsPerTick = 50,
-      updateFieldAppearances = true,
-    } = options;
+    const defaultOptions = this.getDefaultSaveOptions(options);
+    const { objectsPerTick } = defaultOptions;
 
-    assertIs(useObjectStreams, 'useObjectStreams', ['boolean']);
-    assertIs(addDefaultPage, 'addDefaultPage', ['boolean']);
-    assertIs(objectsPerTick, 'objectsPerTick', ['number']);
-    assertIs(updateFieldAppearances, 'updateFieldAppearances', ['boolean']);
-
-    if (addDefaultPage && this.getPageCount() === 0) this.addPage();
-
-    if (updateFieldAppearances) {
-      const form = this.formCache.getValue();
-      if (form) form.updateFieldAppearances();
-    }
-
-    await this.flush();
-
-    const Writer = useObjectStreams ? PDFStreamWriter : PDFWriter;
+    const Writer = await this.validateAndGetAdaptWriter(defaultOptions);
     return Writer.forContext(this.context, objectsPerTick).serializeToBuffer();
   }
 
@@ -1594,6 +1390,68 @@ export default class PDFDocument {
     return dataUri ? `data:application/pdf;base64,${base64}` : base64;
   }
 
+  /**
+   *
+   * Serialize this document to specific directory path formed with A PDF file
+   * For example:
+   * ```js
+   * const pdfBuffer = await saveAsStream { destPath: "/some/your/directory.pdf" }
+   * ```
+   *
+   * @param options The options are used to determine which path to write
+   * @returns Serialized Readable Stream from input Destination Path which is located The PDF file
+   *
+   */
+  async saveAsStream(options: FileSaveOptions): Promise<boolean> {
+    /* tslint:disable-next-line no-unused-expression */
+    options && options.outputPath && assertIsValidString(options.outputPath);
+    const resolvedSaveOptions = this.getDefaultSaveOptions(options);
+    const { objectsPerTick } = resolvedSaveOptions;
+
+    const Writer = await this.validateAndGetAdaptWriter(resolvedSaveOptions);
+    const { outputPath, forceWrite } = options;
+
+    return Writer.forContext(
+      this.context,
+      objectsPerTick,
+    ).writeToTargetPathWithStream({
+      outputPath,
+      forceWrite: forceWrite !== undefined ? forceWrite : true,
+    });
+  }
+
+  /**
+   * Serialize this document directly into a Node.js file descriptor using a
+   * streaming writer. The descriptor should be opened in a writable mode prior
+   * to calling this method.
+   *
+   * @param options Destination details including the path (used for
+   * validation) and file descriptor to write into.
+   * @returns Resolves with `true` once serialization completes.
+   */
+  async saveToFileDescriptor(
+    options: FileDescriptorSaveOptions,
+  ): Promise<boolean> {
+    /* tslint:disable-next-line no-unused-expression */
+    options && options.outputPath && assertIsValidString(options.outputPath);
+    assertIsValidFileDescriptor(options.fd);
+
+    const resolvedSaveOptions = this.getDefaultSaveOptions(options);
+    const { objectsPerTick } = resolvedSaveOptions;
+
+    const Writer = await this.validateAndGetAdaptWriter(resolvedSaveOptions);
+    const { outputPath, forceWrite, fd } = options;
+
+    return Writer.forContext(
+      this.context,
+      objectsPerTick,
+    ).writeToTargetDescriptorWithStream({
+      outputPath,
+      fd,
+      forceWrite: forceWrite !== undefined ? forceWrite : true,
+    });
+  }
+
   findPageForAnnotationRef(ref: PDFRef): PDFPage | undefined {
     const pages = this.getPages();
     for (let idx = 0, len = pages.length; idx < len; idx++) {
@@ -1608,6 +1466,53 @@ export default class PDFDocument {
     return undefined;
   }
 
+  private async validateAndGetAdaptWriter(
+    options: SaveOptions,
+  ): Promise<typeof PDFStreamWriter | typeof PDFWriter> {
+    const {
+      useObjectStreams,
+      addDefaultPage,
+      objectsPerTick,
+      updateFieldAppearances,
+    } = options;
+
+    assertIs(useObjectStreams, 'useObjectStreams', ['boolean']);
+    assertIs(addDefaultPage, 'addDefaultPage', ['boolean']);
+    assertIs(objectsPerTick, 'objectsPerTick', ['number']);
+    assertIs(updateFieldAppearances, 'updateFieldAppearances', ['boolean']);
+
+    if (addDefaultPage && this.getPageCount() === 0) this.addPage();
+
+    if (updateFieldAppearances) {
+      const form = this.formCache.getValue();
+      if (form) form.updateFieldAppearances();
+    }
+
+    await this.flush();
+    return useObjectStreams ? PDFStreamWriter : PDFWriter;
+  }
+
+  private getDefaultSaveOptions(options: SaveOptions): {
+    useObjectStreams: boolean;
+    addDefaultPage: boolean;
+    objectsPerTick: number;
+    updateFieldAppearances: boolean;
+  } {
+    const {
+      useObjectStreams = true,
+      addDefaultPage = true,
+      objectsPerTick = 50,
+      updateFieldAppearances = true,
+    } = options;
+
+    return {
+      useObjectStreams,
+      addDefaultPage,
+      objectsPerTick,
+      updateFieldAppearances,
+    };
+  }
+
   private async embedAll(embeddables: Embeddable[]): Promise<void> {
     for (let idx = 0, len = embeddables.length; idx < len; idx++) {
       await embeddables[idx].embed();
@@ -1615,7 +1520,7 @@ export default class PDFDocument {
   }
 
   private updateInfoDict(): void {
-    const pdfLib = 'pdf-lib (https://github.com/Hopding/pdf-lib)';
+    const pdfLib = `pdf-lib (https://github.com/Hopding/pdf-lib)`;
     const now = new Date();
 
     const info = this.getInfoDict();
@@ -1673,4 +1578,16 @@ function assertIsLiteralOrHexString(
   ) {
     throw new UnexpectedObjectTypeError([PDFHexString, PDFString], pdfObject);
   }
+}
+
+/* tslint:disable-next-line only-arrow-functions */
+function assertIsValidFileDescriptor(fd?: any): asserts fd is number {
+  if (!Number.isInteger(fd) || fd < 0) {
+    throw new Error('Invalid file descriptor.');
+  }
+}
+
+/* tslint:disable-next-line only-arrow-functions */
+function assertIsValidString(str?: any): str is string {
+  return str !== null && str !== undefined && typeof str === 'string';
 }

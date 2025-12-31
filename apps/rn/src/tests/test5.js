@@ -1,6 +1,6 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
-import { fetchAsset } from './assets';
+import { fetchAsset, writePdf } from './assets';
 
 export default async () => {
   const [inputPdfBytes, minionsBananaAlphaBytes] = await Promise.all([

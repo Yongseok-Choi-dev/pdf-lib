@@ -1,4 +1,3 @@
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function startFpsTracker(id) {
   const element = document.getElementById(id);
 
@@ -8,7 +7,7 @@ function startFpsTracker(id) {
   let xCoord = 0;
   const delta = 7;
 
-  const slideRight = () => {
+  const slideRight = (timestamp) => {
     moveTo(xCoord);
     xCoord += delta;
 
@@ -19,7 +18,7 @@ function startFpsTracker(id) {
     }
   };
 
-  const slideLeft = () => {
+  const slideLeft = (timestamp) => {
     moveTo(xCoord);
     xCoord -= delta;
 

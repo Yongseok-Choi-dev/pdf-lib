@@ -1,7 +1,7 @@
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, rgb } from 'pdf-lib';
 
-import { fetchAsset } from './assets';
+import { fetchAsset, writePdf } from './assets';
 
 export default async () => {
   const [inputPdfBytes, ubuntuBytes, smallMarioBytes] = await Promise.all([

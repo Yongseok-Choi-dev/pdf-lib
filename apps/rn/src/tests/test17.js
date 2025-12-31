@@ -5,12 +5,13 @@ import {
   rgb,
   degrees,
   drawText,
+  PDFFont,
   drawEllipse,
   PDFWidgetAnnotation,
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
-import { fetchAsset } from './assets';
+import { fetchAsset, writePdf } from './assets';
 
 export default async () => {
   const [fancyFieldsPdf, ubuntuR] = await Promise.all([

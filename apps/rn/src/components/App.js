@@ -1,9 +1,27 @@
 import React, { Component } from 'react';
+import {
+  Platform,
+  StyleSheet,
+  Text,
+  View,
+  Dimensions,
+  SafeAreaView,
+  ActivityIndicator,
+} from 'react-native';
+import PdfView from 'react-native-pdf';
 
 import ErrorDisplay from './ErrorDisplay';
 import TestLauncher from './TestLauncher';
 import TestRunningSpinner from './TestRunningSpinner';
 import TestResultDisplay from './TestResultDisplay';
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+});
 
 export default class App extends Component {
   static States = {

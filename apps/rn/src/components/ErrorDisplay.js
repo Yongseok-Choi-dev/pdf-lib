@@ -1,5 +1,11 @@
 import React, { Component } from 'react';
-import { StyleSheet, SafeAreaView, Text, ScrollView } from 'react-native';
+import {
+  StyleSheet,
+  SafeAreaView,
+  Text,
+  Button,
+  ScrollView,
+} from 'react-native';
 
 const styles = StyleSheet.create({
   container: {
@@ -11,6 +17,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 20,
     fontWeight: 'bold',
+    marginBottom: -50,
     marginBottom: 50,
   },
   stackText: {

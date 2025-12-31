@@ -90,10 +90,6 @@ class FileEmbedder {
       return context.register(fileSpecDict);
     }
   }
-
-  getFileData() {
-    return this.fileData;
-  }
 }
 
 export default FileEmbedder;

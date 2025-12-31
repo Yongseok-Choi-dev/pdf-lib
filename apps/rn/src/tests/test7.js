@@ -1,6 +1,6 @@
 import { PDFDocument, StandardFonts, degrees } from 'pdf-lib';
 
-import { fetchAsset } from './assets';
+import { fetchAsset, writePdf } from './assets';
 
 const createDonorPdf = async () => {
   const pdfDoc = await PDFDocument.create();
@@ -54,11 +54,12 @@ export default async () => {
   const [anotherDonorPage] = await pdfDoc.copyPages(anotherDonorPdf, [0]);
   pdfDoc.insertPage(1, anotherDonorPage);
 
-  await pdfDoc.save();
+  const savedBytes = await pdfDoc.save();
+  const sizeOfCreatedPdf = savedBytes.length;
 
-  await anotherDonorPdf.save();
+  let sizeOfAllDonorPdfs = (await anotherDonorPdf.save()).length;
   for (let idx = 0, len = allDonorPdfBytes.length; idx < len; idx++) {
-    allDonorPdfBytes[idx].length;
+    sizeOfAllDonorPdfs += allDonorPdfBytes[idx].length;
   }
 
   const base64Pdf = await pdfDoc.saveAsBase64({ dataUri: true });

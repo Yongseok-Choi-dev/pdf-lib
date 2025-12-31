@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     /* Basic Options */
-    "target": "es2015",
+    "target": "es2019",
     "module": "commonjs",
     "allowJs": false,
     "checkJs": false,
@@ -29,15 +29,14 @@
     /* Module Resolution Options */
     "baseUrl": "./src",
     "paths": {
-      "src/*": ["./*"],
+      "src/*": ["./*"]
     },
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "preserveSymlinks": true,
-    "moduleResolution": "node",
-    "jsx": "react",
+    "moduleResolution": "node"
   },
-  "include": ["src/**/*", "tests/**/*"],
+  "include": ["src/**/*"],
   "exclude": [
     ".circleci",
     ".github",
@@ -48,6 +47,6 @@
     "docs",
     "node_modules",
     "scratchpad",
-    "tests",
-  ],
+    "tests"
+  ]
 }
